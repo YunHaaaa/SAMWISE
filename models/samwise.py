@@ -29,6 +29,8 @@ class SAMWISE(nn.Module):
                  args):
         super().__init__()
 
+        self.visualize_mode = False
+        self.visualize_counter = 0  # 시각화 호출 카운터 추가
         self.text_encoder = text_encoder
         self.tokenizer = RobertaTokenizerFast.from_pretrained('roberta-base')
         self.sam = sam
@@ -58,7 +60,43 @@ class SAMWISE(nn.Module):
         self.use_cme_head = args.use_cme_head
         self.cme_decision_window = args.cme_decision_window # minimum number of frames between each CME application
         self.switch_mem = args.switch_mem
+        
+    def visualize_features(self):
+            if self.vis_feats is None or self.fused_feats is None:
+                print("Feature가 캡처되지 않았습니다.")
+                return
 
+            vis_feats_mean = self.vis_feats.mean(dim=1).numpy()  # [B*T, H_p, W_p]
+            fused_feats_mean = self.fused_feats.mean(dim=1).numpy()  # [B*T, H_p, W_p]
+
+            frame_idx = 0
+            vis_map = vis_feats_mean[frame_idx]
+            fused_map = fused_feats_mean[frame_idx]
+
+            vis_map = (vis_map - vis_map.min()) / (vis_map.max() - vis_map.min() + 1e-5)
+            fused_map = (fused_map - fused_map.min()) / (fused_map.max() - fused_map.min() + 1e-5)
+
+            import matplotlib.pyplot as plt
+            import os
+            plt.figure(figsize=(10, 5))
+            plt.subplot(1, 2, 1)
+            plt.title("Without CMT Adapter")
+            plt.imshow(vis_map, cmap='viridis')
+            plt.axis('off')
+            plt.subplot(1, 2, 2)
+            plt.title("With CMT Adapter")
+            plt.imshow(fused_map, cmap='viridis')
+            plt.axis('off')
+
+            # 파일 이름에 카운터를 포함하여 저장
+            os.makedirs("feature_visualizations", exist_ok=True)
+            filename = f"feature_visualizations/frame_{self.visualize_counter}.png"
+            plt.savefig(filename)
+            plt.close()
+            print(f"Feature 시각화가 '{filename}'에 저장되었습니다.")
+
+            # 카운터 증가
+            self.visualize_counter += 1
 
     def forward(self, samples, captions, targets):
         """ The forward expects a NestedTensor, which consists of:
@@ -70,8 +108,20 @@ class SAMWISE(nn.Module):
                - "pred_masks": Shape = [batch_size x num_queries x out_h x out_w]
         """
 
-        # samples: tensor B*T, C, H, W
-        backbone_output: BackboneOutput = self.compute_backbone_output(samples, captions)
+        # samples: tensor B*T, C, H, W# Hook에서 사용할 저장소 초기화
+        self.vis_feats = None  # CMT 사용 전 feature
+        self.fused_feats = None  # CMT 사용 후 feature
+
+        # 시각화 모드 설정 (예: 디버깅 시 True로 설정하거나 인자로 전달받아 설정 가능)
+        self.visualize_mode = True  # 필요에 따라 동적으로 설정
+
+        backbone_output = self.compute_backbone_output(samples, captions)
+
+        # 시각화 수행
+        if self.visualize_mode:
+            self.visualize_features()
+
+        # 나머지 기존 forward 로직 유지
         B, T = backbone_output.B, backbone_output.T
         outputs = {"masks": []}
 
@@ -91,6 +141,7 @@ class SAMWISE(nn.Module):
                     memory_idx = targets[0]['frame_ids'][frame_idx]
 
                 current_vision_feats = backbone_output.get_current_feats(idx)
+                ### TODO: visualize feature
                 decoder_out_w_mem: DecoderOutput = self.compute_decoder_out_w_mem(backbone_output, idx, memory_idx,
                                                                                   self.memory_bank)
 
@@ -157,7 +208,7 @@ class SAMWISE(nn.Module):
         txt, attention_mask, input_ids = self.preprocess_text_features(captions)
 
         B, T = BT
-
+        ### apply fusion - cmt
         if self.motion_prompt:
             vis_outs, state, txt = self._early_fusion_stage(T, samples, txt, attention_mask)
             motion_prompts = self.extract_motion_prompts(captions, input_ids)
@@ -262,7 +313,7 @@ class SAMWISE(nn.Module):
             else:
                 x = layers[idx](x)
         return x
-
+    
     def _early_fusion_stage(self, T, samples, txt, attention_mask):
         vis = self.sam.image_encoder.trunk.patch_embed(samples)
         vis = vis + self.sam.image_encoder.trunk._get_pos_embed(vis.shape[1:3])
@@ -273,9 +324,19 @@ class SAMWISE(nn.Module):
         fusion_vis.insert(0, 0)
         fusion_txt = self.fusion_stages_txt.copy()
         fusion_txt.insert(0, 0)
-        fusion_txt.insert(1,1)
+        fusion_txt.insert(1, 1)
+
+        if self.visualize_mode:
+            vis_no_cmt = vis.clone()
+            vis_outs_no_cmt = []
+
         for i, (i_v, i_t) in enumerate(zip(fusion_vis[:-1], fusion_txt[:-1])):
+            # 'keys' 대신 'blocks'로 변경 (Hiera 객체의 실제 속성에 따라 다를 수 있음)
+            # print("--------------")
+            # print(dir(self.sam.image_encoder.trunk))
             vis = self.forw_layer_list(i_v, fusion_vis[i+1], self.sam.image_encoder.trunk.blocks, vis)
+            if self.visualize_mode:
+                vis_no_cmt = self.forw_layer_list(i_v, fusion_vis[i+1], self.sam.image_encoder.trunk.blocks, vis_no_cmt)
             txt = self.forw_layer_list(i_t, fusion_txt[i+1], self.text_encoder.model.encoder.sentence_encoder.layers, txt, attention_mask)
             if i in self.fusion_stages:
                 v = vis.clone()
@@ -283,15 +344,23 @@ class SAMWISE(nn.Module):
                 v, t = self.cmt_adapters[self.fusion_stages.index(i)](v.permute(0, 3, 1, 2), T, t)
                 vis = vis + v.permute(0, 2, 3, 1)
                 txt = txt + t
-
             vis_outs.append(vis.permute(0, 3, 1, 2))
+            if self.visualize_mode:
+                vis_outs_no_cmt.append(vis_no_cmt.permute(0, 3, 1, 2))
 
         state = txt[:,0]
         if T > 1:
             state = state.repeat_interleave(T, 0)
 
+        if self.visualize_mode:
+            self.vis_feats = vis_outs_no_cmt[-1].detach().cpu()
+            self.fused_feats = vis_outs[-1].detach().cpu()
+        else:
+            self.vis_feats = None
+            self.fused_feats = None
+
         if self.motion_prompt:
-            txt = txt.permute(1, 0, 2)  # LND -> NLD
+            txt = txt.permute(1, 0, 2)
             return vis_outs, state, txt
         return vis_outs, state
 

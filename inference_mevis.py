@@ -156,6 +156,7 @@ def eval_mevis(args, model, save_path_prefix, save_visualize_path_prefix, split=
             all_pred_masks, all_decisions = [], []
 
             vd = VideoEvalDataset(join(img_folder, video_name), frames, max_size=args.max_size)
+            print(img_folder, video_name, frames)
             dl = DataLoader(vd, batch_size=args.eval_clip_window,
                     num_workers=args.num_workers, shuffle=False)
             origin_w, origin_h = vd.origin_w, vd.origin_h
