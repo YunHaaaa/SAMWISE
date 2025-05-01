@@ -65,7 +65,7 @@ def get_args_parser():
                         help="Path to YouTube-VOS dataset")
     parser.add_argument('--davis_path', type=str, default='data/ref-davis',
                         help="Path to DAVIS dataset")
-    parser.add_argument('--mevis_path', type=str, default='data/MeViS_release',
+    parser.add_argument('--mevis_path', type=str, default='/home/cv2/project/haeun/SAMWISE/data/MeVis_release',
                         help="Path to MeViS dataset")
     parser.add_argument('--max_size', default=1024, type=int,
                         help="Frame size for preprocessing")
@@ -110,6 +110,7 @@ def get_args_parser():
                         help="Evaluation task type")
     parser.add_argument('--results_path', type=str,
                         help="Path to folder containing the sequences folders results")
+    parser.add_argument("--local_rank", type=int, default=0, help="Local rank passed from distributed launcher")
 
     return parser
 

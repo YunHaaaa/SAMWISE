@@ -140,6 +140,8 @@ class VideoEvalDataset(Dataset):
         super().__init__()
         self.vid_folder = vid_folder
         self.frames = frames
+        # print("vid folder:", vid_folder)
+        # print("frames:", frames)
         self.vid_len = len(frames)
         self.ext = ext
         self.origin_w, self.origin_h = Image.open(join(vid_folder, frames[0]+ext)).size
