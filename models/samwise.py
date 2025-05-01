@@ -15,6 +15,11 @@ from models.model_utils import BackboneOutput, DecoderOutput, get_same_object_la
 from transformers import RobertaTokenizerFast
 
 
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.decomposition import PCA
+import os
+
 class SAMWISE(nn.Module):
     def __init__(self,
                  image_encoder_embed_dim,
@@ -66,55 +71,54 @@ class SAMWISE(nn.Module):
             print("Feature가 캡처되지 않았습니다.")
             return
 
-        import numpy as np
-        import matplotlib.pyplot as plt
-        import matplotlib.colors as colors
-        import os
-
-        # 채널 차원 평균 내기
-        vis_feats_mean = self.vis_feats.mean(dim=1).numpy()  # [B*T, H_p, W_p]
-        fused_feats_mean = self.fused_feats.mean(dim=1).numpy()  # [B*T, H_p, W_p]
-
         # 첫 번째 프레임 선택
         frame_idx = 0
-        vis_map = vis_feats_mean[frame_idx]
-        fused_map = fused_feats_mean[frame_idx]
+        vis_feats_frame = self.vis_feats[frame_idx]  # [C, H_p, W_p]
+        fused_feats_frame = self.fused_feats[frame_idx]  # [C, H_p, W_p]
 
-        # 최소-최대 정규화 (0~1 범위로)
+        # 피처 맵을 [H_p * W_p, C]로 변환
+        vis_feats_reshaped = vis_feats_frame.permute(1, 2, 0).reshape(-1, vis_feats_frame.shape[0]).numpy()  # [H_p * W_p, C]
+        fused_feats_reshaped = fused_feats_frame.permute(1, 2, 0).reshape(-1, fused_feats_frame.shape[0]).numpy()  # [H_p * W_p, C]
+
+        # PCA 적용: 1개 주성분으로 축소
+        # pca = PCA(n_components=1)
+        # vis_pca = pca.fit_transform(vis_feats_reshaped)  # [H_p * W_p, 1]
+        # fused_pca = pca.fit_transform(fused_feats_reshaped)  # [H_p * W_p, 1]
+
+        # # [H_p, W_p]로 다시 변환
+        # H_p, W_p = vis_feats_frame.shape[1:]
+        # vis_map = vis_pca.reshape(H_p, W_p)
+        # fused_map = fused_pca.reshape(H_p, W_p)
+
+        # 2개 주성분을 사용하여 RGB 채널로 시각화
+        pca = PCA(n_components=1)
+        vis_pca = pca.fit_transform(vis_feats_reshaped)  # [H_p * W_p, 1]
+        fused_pca = pca.fit_transform(fused_feats_reshaped)  # [H_p * W_p, 1]
+
+        # [H_p, W_p]로 다시 변환
+        H_p, W_p = vis_feats_frame.shape[1:]
+        vis_map = vis_pca.reshape(H_p, W_p)
+        fused_map = fused_pca.reshape(H_p, W_p)
+
+        # 0~1 범위로 정규화
         vis_map = (vis_map - vis_map.min()) / (vis_map.max() - vis_map.min() + 1e-5)
         fused_map = (fused_map - fused_map.min()) / (fused_map.max() - fused_map.min() + 1e-5)
 
-        # 구간화: 값을 3개 구간으로 나눔 (백분위 기준: 0~33%, 33~66%, 66~100%)
-        bins_vis = np.percentile(vis_map, [0, 60, 80, 100])  # 3개 구간
-        vis_map_binned = np.digitize(vis_map, bins_vis) - 1  # 값을 구간 인덱스로 변환 (0~2)
-
-        bins_fused = np.percentile(fused_map, [0, 60, 80, 100])  # 3개 구간
-        fused_map_binned = np.digitize(fused_map, bins_fused) - 1  # 값을 구간 인덱스로 변환 (0~2)
-
-        # 구간별 색상 설정
-        cmap = plt.cm.get_cmap('magma', 3)  # 3개 구간에 맞는 색상 맵 ('jet' 기반)
-        norm = colors.BoundaryNorm(boundaries=range(4), ncolors=3)  # 구간 경계 설정 (0~3)
-
         # 시각화
         plt.figure(figsize=(10, 5))
-
         plt.subplot(1, 2, 1)
-        plt.title("Without CMT Adapter")
-        plt.imshow(vis_map_binned, cmap=cmap, norm=norm)
+        plt.title("Without CMT Adapter", fontsize=12, fontweight='bold')
+        plt.imshow(vis_map, cmap='inferno')
         plt.axis('off')
-
         plt.subplot(1, 2, 2)
-        plt.title("With CMT Adapter")
-        plt.imshow(fused_map_binned, cmap=cmap, norm=norm)
+        plt.title("With CMT Adapter", fontsize=12, fontweight='bold')
+        plt.imshow(fused_map, cmap='inferno')
         plt.axis('off')
-
-        # 색상 바 추가 (구간별 색상 표시)
-        plt.colorbar(ticks=range(3), label='Feature Intensity Bins')
 
         # 파일 저장
-        os.makedirs("feature_visualizations_-2", exist_ok=True)
-        filename = f"feature_visualizations_-2/frame_{self.visualize_counter}.png"
-        plt.savefig(filename)
+        os.makedirs("feature_visualizations_pca", exist_ok=True)
+        filename = f"feature_visualizations_pca/frame_{self.visualize_counter}.png"
+        plt.savefig(filename, bbox_inches='tight', dpi=300)
         plt.close()
         print(f"Feature 시각화가 '{filename}'에 저장되었습니다.")
 
@@ -376,8 +380,8 @@ class SAMWISE(nn.Module):
             state = state.repeat_interleave(T, 0)
 
         if self.visualize_mode:
-            self.vis_feats = vis_outs_no_cmt[-2].detach().cpu()
-            self.fused_feats = vis_outs[-2].detach().cpu()
+            self.vis_feats = vis_outs_no_cmt[-1].detach().cpu()
+            self.fused_feats = vis_outs[-1].detach().cpu()
         else:
             self.vis_feats = None
             self.fused_feats = None
