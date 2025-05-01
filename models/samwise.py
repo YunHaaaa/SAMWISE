@@ -62,41 +62,64 @@ class SAMWISE(nn.Module):
         self.switch_mem = args.switch_mem
         
     def visualize_features(self):
-            if self.vis_feats is None or self.fused_feats is None:
-                print("Feature가 캡처되지 않았습니다.")
-                return
+        if self.vis_feats is None or self.fused_feats is None:
+            print("Feature가 캡처되지 않았습니다.")
+            return
 
-            vis_feats_mean = self.vis_feats.mean(dim=1).numpy()  # [B*T, H_p, W_p]
-            fused_feats_mean = self.fused_feats.mean(dim=1).numpy()  # [B*T, H_p, W_p]
+        import numpy as np
+        import matplotlib.pyplot as plt
+        import matplotlib.colors as colors
+        import os
 
-            frame_idx = 0
-            vis_map = vis_feats_mean[frame_idx]
-            fused_map = fused_feats_mean[frame_idx]
+        # 채널 차원 평균 내기
+        vis_feats_mean = self.vis_feats.mean(dim=1).numpy()  # [B*T, H_p, W_p]
+        fused_feats_mean = self.fused_feats.mean(dim=1).numpy()  # [B*T, H_p, W_p]
 
-            vis_map = (vis_map - vis_map.min()) / (vis_map.max() - vis_map.min() + 1e-5)
-            fused_map = (fused_map - fused_map.min()) / (fused_map.max() - fused_map.min() + 1e-5)
+        # 첫 번째 프레임 선택
+        frame_idx = 0
+        vis_map = vis_feats_mean[frame_idx]
+        fused_map = fused_feats_mean[frame_idx]
 
-            import matplotlib.pyplot as plt
-            import os
-            plt.figure(figsize=(10, 5))
-            plt.subplot(1, 2, 1)
-            plt.title("Without CMT Adapter")
-            plt.imshow(vis_map, cmap='viridis')
-            plt.axis('off')
-            plt.subplot(1, 2, 2)
-            plt.title("With CMT Adapter")
-            plt.imshow(fused_map, cmap='viridis')
-            plt.axis('off')
+        # 최소-최대 정규화 (0~1 범위로)
+        vis_map = (vis_map - vis_map.min()) / (vis_map.max() - vis_map.min() + 1e-5)
+        fused_map = (fused_map - fused_map.min()) / (fused_map.max() - fused_map.min() + 1e-5)
 
-            # 파일 이름에 카운터를 포함하여 저장
-            os.makedirs("feature_visualizations", exist_ok=True)
-            filename = f"feature_visualizations/frame_{self.visualize_counter}.png"
-            plt.savefig(filename)
-            plt.close()
-            print(f"Feature 시각화가 '{filename}'에 저장되었습니다.")
+        # 구간화: 값을 3개 구간으로 나눔 (백분위 기준: 0~33%, 33~66%, 66~100%)
+        bins_vis = np.percentile(vis_map, [0, 60, 80, 100])  # 3개 구간
+        vis_map_binned = np.digitize(vis_map, bins_vis) - 1  # 값을 구간 인덱스로 변환 (0~2)
 
-            # 카운터 증가
-            self.visualize_counter += 1
+        bins_fused = np.percentile(fused_map, [0, 60, 80, 100])  # 3개 구간
+        fused_map_binned = np.digitize(fused_map, bins_fused) - 1  # 값을 구간 인덱스로 변환 (0~2)
+
+        # 구간별 색상 설정
+        cmap = plt.cm.get_cmap('magma', 3)  # 3개 구간에 맞는 색상 맵 ('jet' 기반)
+        norm = colors.BoundaryNorm(boundaries=range(4), ncolors=3)  # 구간 경계 설정 (0~3)
+
+        # 시각화
+        plt.figure(figsize=(10, 5))
+
+        plt.subplot(1, 2, 1)
+        plt.title("Without CMT Adapter")
+        plt.imshow(vis_map_binned, cmap=cmap, norm=norm)
+        plt.axis('off')
+
+        plt.subplot(1, 2, 2)
+        plt.title("With CMT Adapter")
+        plt.imshow(fused_map_binned, cmap=cmap, norm=norm)
+        plt.axis('off')
+
+        # 색상 바 추가 (구간별 색상 표시)
+        plt.colorbar(ticks=range(3), label='Feature Intensity Bins')
+
+        # 파일 저장
+        os.makedirs("feature_visualizations_-2", exist_ok=True)
+        filename = f"feature_visualizations_-2/frame_{self.visualize_counter}.png"
+        plt.savefig(filename)
+        plt.close()
+        print(f"Feature 시각화가 '{filename}'에 저장되었습니다.")
+
+        # 카운터 증가
+        self.visualize_counter += 1
 
     def forward(self, samples, captions, targets):
         """ The forward expects a NestedTensor, which consists of:
@@ -353,8 +376,8 @@ class SAMWISE(nn.Module):
             state = state.repeat_interleave(T, 0)
 
         if self.visualize_mode:
-            self.vis_feats = vis_outs_no_cmt[-1].detach().cpu()
-            self.fused_feats = vis_outs[-1].detach().cpu()
+            self.vis_feats = vis_outs_no_cmt[-2].detach().cpu()
+            self.fused_feats = vis_outs[-2].detach().cpu()
         else:
             self.vis_feats = None
             self.fused_feats = None
