@@ -65,8 +65,7 @@ class SAMWISE(nn.Module):
         self.use_cme_head = args.use_cme_head
         self.cme_decision_window = args.cme_decision_window # minimum number of frames between each CME application
         self.switch_mem = args.switch_mem
-        
-
+            
     def visualize_features(self):
         if self.vis_feats is None or self.fused_feats is None:
             print("Feature가 캡처되지 않았습니다.")
@@ -81,34 +80,38 @@ class SAMWISE(nn.Module):
         vis_feats_reshaped = vis_feats_frame.permute(1, 2, 0).reshape(-1, vis_feats_frame.shape[0]).numpy()  # [H_p * W_p, C]
         fused_feats_reshaped = fused_feats_frame.permute(1, 2, 0).reshape(-1, fused_feats_frame.shape[0]).numpy()  # [H_p * W_p, C]
 
-        # PCA 적용: 2개 주성분으로 축소
-        pca = PCA(n_components=2)
-        vis_pca = pca.fit_transform(vis_feats_reshaped)  # [H_p * W_p, 2]
-        fused_pca = pca.fit_transform(fused_feats_reshaped)  # [H_p * W_p, 2]
+        # PCA 적용: 3개 주성분으로 축소
+        pca = PCA(n_components=3)
+        vis_pca = pca.fit_transform(vis_feats_reshaped)  # [H_p * W_p, 3]
+        fused_pca = pca.fit_transform(fused_feats_reshaped)  # [H_p * W_p, 3]
 
         # [H_p, W_p]로 다시 변환
         H_p, W_p = vis_feats_frame.shape[1:]
         vis_pca_0 = vis_pca[:, 0].reshape(H_p, W_p)  # 첫 번째 주성분
         vis_pca_1 = vis_pca[:, 1].reshape(H_p, W_p)  # 두 번째 주성분
+        vis_pca_2 = vis_pca[:, 2].reshape(H_p, W_p)  # 세 번째 주성분
         fused_pca_0 = fused_pca[:, 0].reshape(H_p, W_p)  # 첫 번째 주성분
         fused_pca_1 = fused_pca[:, 1].reshape(H_p, W_p)  # 두 번째 주성분
+        fused_pca_2 = fused_pca[:, 2].reshape(H_p, W_p)  # 세 번째 주성분
 
         # 0~1 범위로 정규화
         vis_pca_0 = (vis_pca_0 - vis_pca_0.min()) / (vis_pca_0.max() - vis_pca_0.min() + 1e-5)
         vis_pca_1 = (vis_pca_1 - vis_pca_1.min()) / (vis_pca_1.max() - vis_pca_1.min() + 1e-5)
+        vis_pca_2 = (vis_pca_2 - vis_pca_2.min()) / (vis_pca_2.max() - vis_pca_2.min() + 1e-5)
         fused_pca_0 = (fused_pca_0 - fused_pca_0.min()) / (fused_pca_0.max() - fused_pca_0.min() + 1e-5)
         fused_pca_1 = (fused_pca_1 - fused_pca_1.min()) / (fused_pca_1.max() - fused_pca_1.min() + 1e-5)
+        fused_pca_2 = (fused_pca_2 - fused_pca_2.min()) / (fused_pca_2.max() - fused_pca_2.min() + 1e-5)
 
         # RGB 채널로 매핑: [H_p, W_p, 3]
         vis_rgb = np.zeros((H_p, W_p, 3))
         vis_rgb[:, :, 0] = vis_pca_0  # R 채널: 첫 번째 주성분
         vis_rgb[:, :, 1] = vis_pca_1  # G 채널: 두 번째 주성분
-        vis_rgb[:, :, 2] = 0  # B 채널: 0으로 설정
+        vis_rgb[:, :, 2] = vis_pca_2  # B 채널: 세 번째 주성분
 
         fused_rgb = np.zeros((H_p, W_p, 3))
         fused_rgb[:, :, 0] = fused_pca_0  # R 채널: 첫 번째 주성분
         fused_rgb[:, :, 1] = fused_pca_1  # G 채널: 두 번째 주성분
-        fused_rgb[:, :, 2] = 0  # B 채널: 0으로 설정
+        fused_rgb[:, :, 2] = fused_pca_2  # B 채널: 세 번째 주성분
 
         # 시각화
         plt.figure(figsize=(10, 5))
@@ -122,8 +125,8 @@ class SAMWISE(nn.Module):
         plt.axis('off')
 
         # 파일 저장
-        os.makedirs("feature_visualizations_pca_2_-2", exist_ok=True)
-        filename = f"feature_visualizations_pca_2_-2/frame_{self.visualize_counter}.png"
+        os.makedirs("feature_visualizations_pca_3", exist_ok=True)
+        filename = f"feature_visualizations_pca_3/frame_{self.visualize_counter}.png"
         plt.savefig(filename, bbox_inches='tight', dpi=300)
         plt.close()
         print(f"Feature 시각화가 '{filename}'에 저장되었습니다.")
@@ -388,8 +391,8 @@ class SAMWISE(nn.Module):
         if self.visualize_mode:
             # self.vis_feats = vis_outs_no_cmt[-1].detach().cpu()
             # self.fused_feats = vis_outs[-1].detach().cpu()
-            self.vis_feats = vis_outs_no_cmt[-2].detach().cpu()
-            self.fused_feats = vis_outs[-2].detach().cpu()
+            self.vis_feats = vis_outs_no_cmt[-1].detach().cpu()
+            self.fused_feats = vis_outs[-1].detach().cpu()
         else:
             self.vis_feats = None
             self.fused_feats = None
