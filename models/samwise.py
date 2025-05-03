@@ -33,7 +33,9 @@ class SAMWISE(nn.Module):
                  adapter_dim,
                  args):
         super().__init__()
-
+        self.img_folder = ""
+        self.video_name = ""
+        self.frames = ""
         self.visualize_mode = False
         self.visualize_counter = 0  # 시각화 호출 카운터 추가
         self.text_encoder = text_encoder
@@ -65,14 +67,14 @@ class SAMWISE(nn.Module):
         self.use_cme_head = args.use_cme_head
         self.cme_decision_window = args.cme_decision_window # minimum number of frames between each CME application
         self.switch_mem = args.switch_mem
-            
-    def visualize_features(self):
+    
+
+    def visualize_features(self, video_record, frame_idx, frame_id):
         if self.vis_feats is None or self.fused_feats is None:
-            print("Feature가 캡처되지 않았습니다.")
+            print(f"Video {video_record}, Frame {frame_id}: Feature가 캡처되지 않았습니다.")
             return
 
-        # 첫 번째 프레임 선택
-        frame_idx = 0
+        # 피처 맵 선택
         vis_feats_frame = self.vis_feats[frame_idx]  # [C, H_p, W_p]
         fused_feats_frame = self.fused_feats[frame_idx]  # [C, H_p, W_p]
 
@@ -124,48 +126,50 @@ class SAMWISE(nn.Module):
         plt.imshow(fused_rgb)
         plt.axis('off')
 
-        # 파일 저장
-        os.makedirs("feature_visualizations_pca_3", exist_ok=True)
-        filename = f"feature_visualizations_pca_3/frame_{self.visualize_counter}.png"
+        # 영상별 디렉토리 생성 및 파일 저장
+        video_dir = f"feature_visualizations_pca_3_-2_f/video_{self.video_name}"
+        os.makedirs(video_dir, exist_ok=True)
+        filename = f"{video_dir}/frame_{frame_id}.png"
         plt.savefig(filename, bbox_inches='tight', dpi=300)
         plt.close()
-        print(f"Feature 시각화가 '{filename}'에 저장되었습니다.")
+        print(f"Video {video_record}, Frame {frame_id}: Feature 시각화가 '{filename}'에 저장되었습니다.")
 
-        # 카운터 증가
-        self.visualize_counter += 1
-
-    def forward(self, samples, captions, targets):
-        """ The forward expects a NestedTensor, which consists of:
-               - samples.tensors: image sequences, of shape [num_frames x 3 x H x W]
-               - samples.mask: a binary mask of shape [num_frames x H x W], containing 1 on padded pixels
-               - captions: list[str]
-               - targets:  list[dict]; during training contains masks, during inference frame Id info
+    def forward(self, samples, captions, targets, data_roots):
+        """ The forward expects a NestedTensor, which consists of:
+            - samples.tensors: image sequences, of shape [num_frames x 3 x H x W]
+            - samples.mask: a binary mask of shape [num_frames x H x W], containing 1 on padded pixels
+            - captions: list[str]
+            - targets:  list[dict]; during training contains masks, during inference frame Id info
             It returns a dict with the following elements:
-               - "pred_masks": Shape = [batch_size x num_queries x out_h x out_w]
+            - "pred_masks": Shape = [batch_size x num_queries x out_h x out_w]
         """
-
-        # samples: tensor B*T, C, H, W# Hook에서 사용할 저장소 초기화
+        self.img_folder, self.video_name, self.frames = data_roots
+        # Hook에서 사용할 저장소 초기화
         self.vis_feats = None  # CMT 사용 전 feature
         self.fused_feats = None  # CMT 사용 후 feature
 
-        # 시각화 모드 설정 (예: 디버깅 시 True로 설정하거나 인자로 전달받아 설정 가능)
-        self.visualize_mode = True  # 필요에 따라 동적으로 설정
+        # 시각화 모드 설정
+        self.visualize_mode = True  # MeVIS 검증 데이터셋에서 시각화 활성화
 
         backbone_output = self.compute_backbone_output(samples, captions)
-
-        # 시각화 수행
-        if self.visualize_mode:
-            self.visualize_features()
 
         # 나머지 기존 forward 로직 유지
         B, T = backbone_output.B, backbone_output.T
         outputs = {"masks": []}
 
         for video_record in range(B):
-            if self.training or T==1: # T == 1 for pre-training, no propagation from memory bank
+            print(f"Processing video {video_record}")  # 디버깅 로그 추가
+            if self.training or T==1:  # T == 1 for pre-training, no propagation from memory bank
                 self.memory_bank, self.last_frame_cme_applied = {}, 0
             elif targets[0]['frame_ids'][0] == 0:  # it's the first frame of a new video
                 self.memory_bank, self.last_frame_cme_applied = {}, 0
+
+            # 모든 프레임에 대해 시각화 수행
+            if self.visualize_mode:
+                for frame_idx in range(T):
+                    frame_id = targets[0]['frame_ids'][frame_idx]  # 실제 프레임 ID 사용
+                    print(f"Processing frame {frame_id} in video {video_record}")  # 디버깅 로그 추가
+                    self.visualize_features(video_record, frame_idx, frame_id)
 
             for frame_idx in range(T):
                 idx = video_record * T + frame_idx
@@ -179,7 +183,7 @@ class SAMWISE(nn.Module):
                 current_vision_feats = backbone_output.get_current_feats(idx)
                 ### TODO: visualize feature
                 decoder_out_w_mem: DecoderOutput = self.compute_decoder_out_w_mem(backbone_output, idx, memory_idx,
-                                                                                  self.memory_bank)
+                                                                                self.memory_bank)
 
                 if self.use_cme_head:
                     # wait at least cme_decision_window frames between 2 CME applications
@@ -187,7 +191,7 @@ class SAMWISE(nn.Module):
                         # memory-less prediction
                         decoder_out_no_mem_cme: DecoderOutput = self.compute_decoder_out_no_mem(backbone_output, idx)
                         pred_cme_logits = self.conditional_memory_encoder(decoder_out_w_mem.obj_ptr.detach(),
-                                                                          decoder_out_no_mem_cme.early_obj_ptr.detach())
+                                                                        decoder_out_no_mem_cme.early_obj_ptr.detach())
 
                         if pred_cme_logits.argmax().item() == 1 and not self.training:  # not training and switch
                             decoder_out_w_mem = self.apply_decision(decoder_out_w_mem, decoder_out_no_mem_cme)
@@ -196,8 +200,8 @@ class SAMWISE(nn.Module):
                         if self.training:
                             # cme_label indicates whether memory features and memory-less features point to same object
                             cme_label = get_same_object_labels(decoder_out_w_mem.masks.detach().cpu(),
-                                                               decoder_out_no_mem_cme.masks.detach().cpu(),
-                                                               decoder_out_no_mem_cme.object_score_logits.detach()).item()
+                                                            decoder_out_no_mem_cme.masks.detach().cpu(),
+                                                            decoder_out_no_mem_cme.object_score_logits.detach()).item()
 
                             if 'pred_cme_logits' not in outputs:
                                 outputs['pred_cme_logits'] = []
@@ -214,7 +218,7 @@ class SAMWISE(nn.Module):
             return outputs
         else:
             return {"pred_masks": masks.squeeze(1)}
-
+    
 
     @staticmethod
     def preprocess_visual_features(samples, image_size):
@@ -391,8 +395,8 @@ class SAMWISE(nn.Module):
         if self.visualize_mode:
             # self.vis_feats = vis_outs_no_cmt[-1].detach().cpu()
             # self.fused_feats = vis_outs[-1].detach().cpu()
-            self.vis_feats = vis_outs_no_cmt[-1].detach().cpu()
-            self.fused_feats = vis_outs[-1].detach().cpu()
+            self.vis_feats = vis_outs_no_cmt[-2].detach().cpu()
+            self.fused_feats = vis_outs[-2].detach().cpu()
         else:
             self.vis_feats = None
             self.fused_feats = None
