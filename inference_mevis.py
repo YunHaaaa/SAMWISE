@@ -169,7 +169,7 @@ def eval_mevis(args, model, save_path_prefix, save_visualize_path_prefix, split=
                 target = {"size": size, 'frame_ids': clip_frames_ids}
 
                 with torch.no_grad():
-                    outputs = model([imgs], [exp], [target])
+                    outputs = model([imgs], [exp], [target], [img_folder, video_name, frames, exp_id])
 
                 pred_masks = outputs["pred_masks"]  # [t, q, h, w]
                 pred_masks = pred_masks.unsqueeze(0)
