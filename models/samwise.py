@@ -33,9 +33,12 @@ class SAMWISE(nn.Module):
                  adapter_dim,
                  args):
         super().__init__()
+
         self.img_folder = ""
         self.video_name = ""
         self.frames = ""
+        self.exp_id = ""
+
         self.visualize_mode = False
         self.visualize_counter = 0  # 시각화 호출 카운터 추가
         self.text_encoder = text_encoder
@@ -127,7 +130,7 @@ class SAMWISE(nn.Module):
         plt.axis('off')
 
         # 영상별 디렉토리 생성 및 파일 저장
-        video_dir = f"feature_visualizations_pca_3_-2_f/video_{self.video_name}"
+        video_dir = f"feature_visualizations_pca_3_-2_exp/video_{self.video_name}/{self.exp_id}"
         os.makedirs(video_dir, exist_ok=True)
         filename = f"{video_dir}/frame_{frame_id}.png"
         plt.savefig(filename, bbox_inches='tight', dpi=300)
@@ -143,7 +146,7 @@ class SAMWISE(nn.Module):
             It returns a dict with the following elements:
             - "pred_masks": Shape = [batch_size x num_queries x out_h x out_w]
         """
-        self.img_folder, self.video_name, self.frames = data_roots
+        self.img_folder, self.video_name, self.frames, self.exp_id = data_roots
         # Hook에서 사용할 저장소 초기화
         self.vis_feats = None  # CMT 사용 전 feature
         self.fused_feats = None  # CMT 사용 후 feature
@@ -218,7 +221,6 @@ class SAMWISE(nn.Module):
             return outputs
         else:
             return {"pred_masks": masks.squeeze(1)}
-    
 
     @staticmethod
     def preprocess_visual_features(samples, image_size):
