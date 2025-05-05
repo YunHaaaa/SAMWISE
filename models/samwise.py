@@ -77,7 +77,6 @@ class SAMWISE(nn.Module):
             print(f"Video {video_record}, Frame {frame_id}: Feature가 캡처되지 않았습니다.")
             return
 
-        # 피처 맵 선택
         vis_feats_frame = self.vis_feats[frame_idx]  # [C, H_p, W_p]
         fused_feats_frame = self.fused_feats[frame_idx]  # [C, H_p, W_p]
 
@@ -107,30 +106,28 @@ class SAMWISE(nn.Module):
         fused_pca_1 = (fused_pca_1 - fused_pca_1.min()) / (fused_pca_1.max() - fused_pca_1.min() + 1e-5)
         fused_pca_2 = (fused_pca_2 - fused_pca_2.min()) / (fused_pca_2.max() - fused_pca_2.min() + 1e-5)
 
-        # RGB 채널로 매핑: [H_p, W_p, 3]
-        vis_rgb = np.zeros((H_p, W_p, 3))
-        vis_rgb[:, :, 0] = vis_pca_0  # R 채널: 첫 번째 주성분
-        vis_rgb[:, :, 1] = vis_pca_1  # G 채널: 두 번째 주성분
-        vis_rgb[:, :, 2] = vis_pca_2  # B 채널: 세 번째 주성분
+        # 세 주성분을 조합하여 단일 값으로 변환 (유클리드 노름 사용)
+        vis_map = np.sqrt(vis_pca_0**2 + vis_pca_1**2 + vis_pca_2**2)  # [H_p, W_p]
+        fused_map = np.sqrt(fused_pca_0**2 + fused_pca_1**2 + fused_pca_2**2)  # [H_p, W_p]
 
-        fused_rgb = np.zeros((H_p, W_p, 3))
-        fused_rgb[:, :, 0] = fused_pca_0  # R 채널: 첫 번째 주성분
-        fused_rgb[:, :, 1] = fused_pca_1  # G 채널: 두 번째 주성분
-        fused_rgb[:, :, 2] = fused_pca_2  # B 채널: 세 번째 주성분
+        # 0~1 범위로 정규화
+        vis_map = (vis_map - vis_map.min()) / (vis_map.max() - vis_map.min() + 1e-5)
+        fused_map = (fused_map - fused_map.min()) / (fused_map.max() - fused_map.min() + 1e-5)
 
         # 시각화
         plt.figure(figsize=(10, 5))
         plt.subplot(1, 2, 1)
         plt.title("Without CMT Adapter", fontsize=12, fontweight='bold')
-        plt.imshow(vis_rgb)
+        plt.imshow(vis_map, cmap='gnuplot2')
         plt.axis('off')
         plt.subplot(1, 2, 2)
         plt.title("With CMT Adapter", fontsize=12, fontweight='bold')
-        plt.imshow(fused_rgb)
+        plt.imshow(fused_map, cmap='gnuplot2')
         plt.axis('off')
 
+
         # 영상별 디렉토리 생성 및 파일 저장
-        video_dir = f"feature_visualizations_pca_3_-2_exp/video_{self.video_name}/{self.exp_id}"
+        video_dir = f"feature_visualizations_pca_3_-1_gnuplot2/video_{self.video_name}/{self.exp_id}"
         os.makedirs(video_dir, exist_ok=True)
         filename = f"{video_dir}/frame_{frame_id}.png"
         plt.savefig(filename, bbox_inches='tight', dpi=300)
@@ -395,10 +392,10 @@ class SAMWISE(nn.Module):
             state = state.repeat_interleave(T, 0)
 
         if self.visualize_mode:
-            # self.vis_feats = vis_outs_no_cmt[-1].detach().cpu()
-            # self.fused_feats = vis_outs[-1].detach().cpu()
-            self.vis_feats = vis_outs_no_cmt[-2].detach().cpu()
-            self.fused_feats = vis_outs[-2].detach().cpu()
+            self.vis_feats = vis_outs_no_cmt[-1].detach().cpu()
+            self.fused_feats = vis_outs[-1].detach().cpu()
+            # self.vis_feats = vis_outs_no_cmt[-2].detach().cpu()
+            # self.fused_feats = vis_outs[-2].detach().cpu()
         else:
             self.vis_feats = None
             self.fused_feats = None
