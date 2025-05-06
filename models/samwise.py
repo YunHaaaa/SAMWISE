@@ -77,6 +77,7 @@ class SAMWISE(nn.Module):
             print(f"Video {video_record}, Frame {frame_id}: Feature가 캡처되지 않았습니다.")
             return
 
+        # 피처 맵 선택
         vis_feats_frame = self.vis_feats[frame_idx]  # [C, H_p, W_p]
         fused_feats_frame = self.fused_feats[frame_idx]  # [C, H_p, W_p]
 
@@ -118,21 +119,21 @@ class SAMWISE(nn.Module):
         plt.figure(figsize=(10, 5))
         plt.subplot(1, 2, 1)
         plt.title("Without CMT Adapter", fontsize=12, fontweight='bold')
-        plt.imshow(vis_map, cmap='gnuplot2')
+        plt.imshow(vis_map, cmap='viridis')
         plt.axis('off')
         plt.subplot(1, 2, 2)
         plt.title("With CMT Adapter", fontsize=12, fontweight='bold')
-        plt.imshow(fused_map, cmap='gnuplot2')
+        plt.imshow(fused_map, cmap='viridis')
         plt.axis('off')
 
-
         # 영상별 디렉토리 생성 및 파일 저장
-        video_dir = f"feature_visualizations_pca_3_-1_gnuplot2/video_{self.video_name}/{self.exp_id}"
+        video_dir = f"feature_visualizations_3_-1_viridis/video_{self.video_name}/{self.exp_id}"
         os.makedirs(video_dir, exist_ok=True)
         filename = f"{video_dir}/frame_{frame_id}.png"
         plt.savefig(filename, bbox_inches='tight', dpi=300)
         plt.close()
         print(f"Video {video_record}, Frame {frame_id}: Feature 시각화가 '{filename}'에 저장되었습니다.")
+
 
     def forward(self, samples, captions, targets, data_roots):
         """ The forward expects a NestedTensor, which consists of:
@@ -225,9 +226,11 @@ class SAMWISE(nn.Module):
             samples = nested_tensor_from_videos_list(samples)
         samples, masks = samples.decompose()
         B, T, C, H, W = samples.shape
+        print("sample shape:", samples.shape)
         samples = samples.view(B * T, C, H, W)
         orig_size = [tuple(x.shape[-2:]) for x in samples]
         samples = torch.stack([preprocess(x, image_size) for x in samples], dim=0)
+        print("after process:", samples.shape)
         BT = (B, T)
         return samples, BT, orig_size
 
@@ -542,6 +545,7 @@ def build_samwise(args):
     text_encoder_embed_dim = roberta.model.encoder.lm_head.dense.out_features
 
     sam2_weights, sam2_config = SAM2_PATHS_CONFIG[args.sam2_version]
+    print(sam2_config)
     if not os.path.isfile(sam2_weights):
         print(f"Downloading SAM2-{args.sam2_version}")
         py3_wget.download_file(SAM2_WEIGHTS_URL[args.sam2_version], sam2_weights)
@@ -562,6 +566,7 @@ def build_samwise(args):
 
     # build Conditional Memory Encoder
     conditional_memory_encoder = ConditionalMemoryEncoder(sam.hidden_dim)
+    print(sam.image_size)
 
     ## Samwise
     model = SAMWISE(
